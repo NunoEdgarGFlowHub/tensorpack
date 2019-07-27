@@ -6,6 +6,8 @@ import numpy as np
 import cv2
 
 from .base import ImageAugmentor
+from .meta import MapImage
+from .transform import TransformFactory
 
 __all__ = ['Hue', 'Brightness', 'BrightnessScale', 'Contrast', 'MeanVarianceNormalize',
            'GaussianBlur', 'Gamma', 'Clip', 'Saturation', 'Lighting', 'MinMaxNormalize']
@@ -25,10 +27,11 @@ class Hue(ImageAugmentor):
         rgb = bool(rgb)
         self._init(locals())
 
-    def _get_augment_params(self, _):
-        return self._rand_range(*self.range)
+    def get_transform(self, _):
+        hue = self._rand_range(*self.range)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, hue))
 
-    def _augment(self, img, hue):
+    def _impl(self, img, hue):
         m = cv2.COLOR_BGR2HSV if not self.rgb else cv2.COLOR_RGB2HSV
         hsv = cv2.cvtColor(img, m)
         # https://docs.opencv.org/3.2.0/de/d25/imgproc_color_conversions.html#color_convert_rgb_hsv
@@ -57,11 +60,11 @@ class Brightness(ImageAugmentor):
         assert delta > 0
         self._init(locals())
 
-    def _get_augment_params(self, _):
+    def get_transform(self, _):
         v = self._rand_range(-self.delta, self.delta)
-        return v
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, v))
 
-    def _augment(self, img, v):
+    def _impl(self, img, v):
         old_dtype = img.dtype
         img = img.astype('float32')
         img += v
@@ -83,11 +86,11 @@ class BrightnessScale(ImageAugmentor):
         super(BrightnessScale, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, _):
+    def get_transform(self, _):
         v = self._rand_range(*self.range)
-        return v
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, v))
 
-    def _augment(self, img, v):
+    def _impl(self, img, v):
         old_dtype = img.dtype
         img = img.astype('float32')
         img *= v
@@ -111,10 +114,11 @@ class Contrast(ImageAugmentor):
         super(Contrast, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
-        return self._rand_range(*self.factor_range)
+    def get_transform(self, _):
+        r = self._rand_range(*self.factor_range)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, r))
 
-    def _augment(self, img, r):
+    def _impl(self, img, r):
         old_dtype = img.dtype
 
         if img.ndim == 3:
@@ -132,8 +136,10 @@ class Contrast(ImageAugmentor):
             img = np.clip(img, 0, 255)
         return img.astype(old_dtype)
 
+# TODO PhotometricTransform with all the clips & dtypes
 
-class MeanVarianceNormalize(ImageAugmentor):
+
+class MeanVarianceNormalize(MapImage):
     """
     Linearly scales the image to have zero mean and unit norm.
     ``x = (x - mean) / adjusted_stddev``
@@ -148,8 +154,9 @@ class MeanVarianceNormalize(ImageAugmentor):
             all_channel (bool): if True, normalize all channels together. else separately.
         """
         self._init(locals())
+        super(MeanVarianceNormalize, self).__init__(func=self._impl)
 
-    def _augment(self, img, _):
+    def _impl(self, img):
         img = img.astype('float32')
         if self.all_channel:
             mean = np.mean(img)
@@ -173,13 +180,13 @@ class GaussianBlur(ImageAugmentor):
         super(GaussianBlur, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
+    def get_transform(self, _):
         sx, sy = self.rng.randint(self.max_size, size=(2,))
         sx = sx * 2 + 1
         sy = sy * 2 + 1
-        return sx, sy
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, (sx, sy)))
 
-    def _augment(self, img, s):
+    def _impl(self, img, s):
         return np.reshape(cv2.GaussianBlur(img, s, sigmaX=0, sigmaY=0,
                                            borderType=cv2.BORDER_REPLICATE), img.shape)
 
@@ -194,10 +201,11 @@ class Gamma(ImageAugmentor):
         super(Gamma, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, _):
-        return self._rand_range(*self.range)
+    def get_transform(self, _):
+        gamma = self._rand_range(*self.range)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, gamma))
 
-    def _augment(self, img, gamma):
+    def _impl(self, img, gamma):
         old_dtype = img.dtype
         lut = ((np.arange(256, dtype='float32') / 255) ** (1. / (1. + gamma)) * 255).astype('uint8')
         img = np.clip(img, 0, 255).astype('uint8')
@@ -217,9 +225,8 @@ class Clip(ImageAugmentor):
         """
         self._init(locals())
 
-    def _augment(self, img, _):
-        img = np.clip(img, self.min, self.max)
-        return img
+    def get_transform(self, _):
+        return TransformFactory(name=str(self), apply_image=lambda img: np.clip(img, self.min, self.max))
 
 
 class Saturation(ImageAugmentor):
@@ -239,10 +246,11 @@ class Saturation(ImageAugmentor):
         assert alpha < 1
         self._init(locals())
 
-    def _get_augment_params(self, _):
-        return 1 + self._rand_range(-self.alpha, self.alpha)
+    def get_transform(self, _):
+        v = 1 + self._rand_range(-self.alpha, self.alpha)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, v))
 
-    def _augment(self, img, v):
+    def _impl(self, img, v):
         old_dtype = img.dtype
         m = cv2.COLOR_RGB2GRAY if self.rgb else cv2.COLOR_BGR2GRAY
         grey = cv2.cvtColor(img, m)
@@ -273,12 +281,12 @@ class Lighting(ImageAugmentor):
         assert eigvec.shape == (3, 3)
         self._init(locals())
 
-    def _get_augment_params(self, img):
+    def get_transform(self, img):
         assert img.shape[2] == 3
-        ret = self.rng.randn(3) * self.std
-        return ret.astype('float32')
+        v = (self.rng.randn(3) * self.std).astype("float32")
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, v))
 
-    def _augment(self, img, v):
+    def _impl(self, img, v):
         old_dtype = img.dtype
         v = v * self.eigval
         v = v.reshape((3, 1))
@@ -304,7 +312,10 @@ class MinMaxNormalize(ImageAugmentor):
         """
         self._init(locals())
 
-    def _augment(self, img, _):
+    def get_transform(self, _):
+        return TransformFactory(name=str(self), apply_image=self._impl)
+
+    def _impl(self, img):
         img = img.astype('float32')
         if self.all_channel:
             minimum = np.min(img)

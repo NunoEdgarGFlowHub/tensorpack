@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 
 from .base import ImageAugmentor
+from .transform import TransformFactory
 
 __all__ = ['JpegNoise', 'GaussianNoise', 'SaltPepperNoise']
 
@@ -21,10 +22,11 @@ class JpegNoise(ImageAugmentor):
         super(JpegNoise, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
-        return self.rng.randint(*self.quality_range)
+    def get_transform(self, img):
+        q = self.rng.randint(*self.quality_range)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, q))
 
-    def _augment(self, img, q):
+    def _impl(self, img, q):
         enc = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, q])[1]
         return cv2.imdecode(enc, 1).astype(img.dtype)
 
@@ -42,10 +44,11 @@ class GaussianNoise(ImageAugmentor):
         super(GaussianNoise, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
-        return self.rng.randn(*img.shape)
+    def get_transform(self, img):
+        noise = self.rng.randn(*img.shape)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, noise))
 
-    def _augment(self, img, noise):
+    def _impl(self, img, noise):
         old_dtype = img.dtype
         ret = img + noise * self.sigma
         if self.clip or old_dtype == np.uint8:
@@ -67,10 +70,11 @@ class SaltPepperNoise(ImageAugmentor):
         super(SaltPepperNoise, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
-        return self.rng.uniform(low=0, high=1, size=img.shape)
+    def get_transform(self, img):
+        p = self.rng.uniform(low=0, high=1, size=img.shape)
+        return TransformFactory(name=str(self), apply_image=lambda img: self._impl(img, p))
 
-    def _augment(self, img, param):
+    def _impl(self, img, param):
         img[param > (1 - self.white_prob)] = 255
         img[param < self.black_prob] = 0
         return img

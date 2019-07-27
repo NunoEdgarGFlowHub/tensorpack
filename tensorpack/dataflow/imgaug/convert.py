@@ -4,13 +4,12 @@
 import numpy as np
 import cv2
 
-from .base import ImageAugmentor
 from .meta import MapImage
 
 __all__ = ['ColorSpace', 'Grayscale', 'ToUint8', 'ToFloat32']
 
 
-class ColorSpace(ImageAugmentor):
+class ColorSpace(MapImage):
     """ Convert into another color space.  """
 
     def __init__(self, mode, keepdims=True):
@@ -20,9 +19,10 @@ class ColorSpace(ImageAugmentor):
             keepdims (bool): keep the dimension of image unchanged if OpenCV
                 changes it.
         """
+        super(ColorSpace, self).__init__(func=self._func)
         self._init(locals())
 
-    def _augment(self, img, _):
+    def _func(self, img):
         transf = cv2.cvtColor(img, self.mode)
         if self.keepdims:
             if len(transf.shape) is not len(img.shape):

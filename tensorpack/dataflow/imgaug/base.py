@@ -4,14 +4,13 @@
 import os
 import inspect
 import pprint
-from abc import ABCMeta, abstractmethod
-import six
-from six.moves import zip
+from collections import namedtuple
 import weakref
 
 from ...utils.argtools import log_once
 from ...utils.utils import get_rng
 from ..image import check_dtype
+from .transform import TransformList
 
 __all__ = ['Augmentor', 'ImageAugmentor', 'AugmentorList']
 
@@ -22,7 +21,9 @@ def _reset_augmentor_after_fork(aug_ref):
         aug.reset_state()
 
 
-@six.add_metaclass(ABCMeta)
+ImagePlaceholder = namedtuple("ImagePlaceholder", ["shape"])
+
+
 class Augmentor(object):
     """ Base class for an augmentor"""
 
@@ -66,8 +67,8 @@ class Augmentor(object):
         Returns:
             augmented data
         """
-        d, params = self._augment_return_params(d)
-        return d
+        t = self.get_transform(d)
+        return t.apply_image(d)
 
     def augment_return_params(self, d):
         """
@@ -80,7 +81,8 @@ class Augmentor(object):
         Returns:
             (augmented data, augmentation params)
         """
-        return self._augment_return_params(d)
+        t = self.get_transform(d)
+        return t.apply_image(d), t
 
     def _augment_return_params(self, d):
         """
@@ -102,12 +104,12 @@ class Augmentor(object):
         """
         return self._augment(d, param)
 
-    @abstractmethod
     def _augment(self, d, param):
         """
         Augment with the given param and return the new data.
         The augmentor is allowed to modify data in-place.
         """
+        return param.apply_image(d)
 
     def _get_augment_params(self, d):
         """
@@ -152,6 +154,9 @@ class Augmentor(object):
             log_once(e.args[0], 'warn')
             return super(Augmentor, self).__repr__()
 
+    def get_transform(self, d):
+        pass
+
     __str__ = __repr__
 
 
@@ -178,7 +183,7 @@ class ImageAugmentor(Augmentor):
         return self._augment_coords(coords, param)
 
     def _augment_coords(self, coords, param):
-        return coords
+        return param.apply_coords(coords)
 
 
 class AugmentorList(ImageAugmentor):
@@ -203,23 +208,15 @@ class AugmentorList(ImageAugmentor):
         check_dtype(img)
         assert img.ndim in [2, 3], img.ndim
 
-        prms = []
+        tfms = []
         for a in self.augmentors:
-            img, prm = a._augment_return_params(img)
-            prms.append(prm)
-        return img, prms
+            t = a.get_transform(img)
+            img = t.apply_image(img)
+            tfms.append(t)
+        return img, TransformList(tfms)
 
-    def _augment(self, img, param):
-        check_dtype(img)
-        assert img.ndim in [2, 3], img.ndim
-        for aug, prm in zip(self.augmentors, param):
-            img = aug._augment(img, prm)
-        return img
-
-    def _augment_coords(self, coords, param):
-        for aug, prm in zip(self.augmentors, param):
-            coords = aug._augment_coords(coords, prm)
-        return coords
+    def augment(self, img):
+        return self._augment_return_params(img)[0]
 
     def reset_state(self):
         """ Will reset state of each augmentor """
